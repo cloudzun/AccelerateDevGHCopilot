@@ -30,12 +30,20 @@ class ConsoleApp:
             print(' - "e" to extend the book loan')
         if options & CommonActions.RENEW_PATRON_MEMBERSHIP:
             print(' - "m" to extend patron\'s membership')
+        if options & CommonActions.SEARCH_BOOKS:
+            print(' - "b" to check if a book is available for loan')
         if options & CommonActions.SEARCH_PATRONS:
             print(' - "s" for new search')
         if options & CommonActions.QUIT:
             print(' - "q" to quit')
         if options & CommonActions.SELECT:
             print(' - type a number to select a list item.')
+
+    def read_input_options(self, options):
+        selection = input("Enter your choice: ").strip().lower()
+        if selection == 'b' and (options & CommonActions.SEARCH_BOOKS):
+            return CommonActions.SEARCH_BOOKS
+        return selection
 
     def run(self) -> None:
         while True:
@@ -104,6 +112,7 @@ class ConsoleApp:
         if valid_loans:
             options = (
                 CommonActions.RENEW_PATRON_MEMBERSHIP
+                | CommonActions.SEARCH_BOOKS
                 | CommonActions.SEARCH_PATRONS
                 | CommonActions.QUIT
                 | CommonActions.SELECT
@@ -113,7 +122,8 @@ class ConsoleApp:
         else:
             print("No valid loans for this patron.")
             options = (
-                CommonActions.SEARCH_PATRONS
+                CommonActions.SEARCH_BOOKS
+                | CommonActions.SEARCH_PATRONS
                 | CommonActions.QUIT
             )
             selection = self._get_patron_details_input(options)
@@ -134,13 +144,15 @@ class ConsoleApp:
 
     def _get_patron_details_input(self, options):
         self.write_input_options(options)
-        return input("Enter your choice: ").strip().lower()
+        return self.read_input_options(options)
 
     def _handle_patron_details_selection(self, selection, patron, valid_loans):
         if selection == 'q':
             return ConsoleState.QUIT
         elif selection == 's':
             return ConsoleState.PATRON_SEARCH
+        elif selection == CommonActions.SEARCH_BOOKS:
+            return self.search_books()
         elif selection == 'm':
             status = self._patron_service.renew_membership(patron.id)
             print(status)
@@ -154,7 +166,7 @@ class ConsoleApp:
             print("Invalid selection. Please enter a number shown in the list above.")
             return ConsoleState.PATRON_DETAILS
         else:
-            print("Invalid input. Please enter a number, 'm', 's', or 'q'.")
+            print("Invalid input. Please enter a number, 'm', 'b', 's', or 'q'.")
             return ConsoleState.PATRON_DETAILS
 
     def _handle_no_loans_selection(self, selection):
@@ -162,9 +174,44 @@ class ConsoleApp:
             return ConsoleState.QUIT
         elif selection == 's':
             return ConsoleState.PATRON_SEARCH
+        elif selection == CommonActions.SEARCH_BOOKS:
+            return self.search_books()
         else:
             print("Invalid input.")
             return ConsoleState.PATRON_DETAILS
+
+    def search_books(self) -> ConsoleState:
+        title = input("Enter a book title to check availability: ").strip()
+        if not title:
+            print("No title provided.")
+            return ConsoleState.PATRON_DETAILS
+
+        books = self._patron_repository.get_all_books()
+        book_items = self._patron_repository.get_all_book_items()
+        all_loans = self._loan_repository.get_all_loans()
+
+        book = next((item for item in books if item.title.lower() == title.lower()), None)
+        if book is None:
+            print("Book not found.")
+            return ConsoleState.PATRON_DETAILS
+
+        matching_items = [item for item in book_items if item.book_id == book.id]
+        active_loans = [
+            loan for loan in all_loans
+            if loan.book_item_id in [item.id for item in matching_items] and loan.return_date is None
+        ]
+
+        if len(active_loans) < len(matching_items):
+            print(f"{book.title} is available for loan")
+            return ConsoleState.PATRON_DETAILS
+
+        if active_loans:
+            earliest_loan = min(active_loans, key=lambda item: item.due_date)
+            print(f"{book.title} is on loan to another patron. The return due date is {earliest_loan.due_date}.")
+            return ConsoleState.PATRON_DETAILS
+
+        print(f"{book.title} is available for loan")
+        return ConsoleState.PATRON_DETAILS
 
     def loan_details(self) -> ConsoleState:
         loan = self.selected_loan_details
